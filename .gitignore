@@ -210,6 +210,5 @@ __marimo__/
 
 # data 
 *.pkl
-*.npz
 *.npy
 *.mat
