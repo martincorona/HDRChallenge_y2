@@ -1,13 +1,15 @@
 import torch
 import numpy as np
+import os
 from torch.utils.data import Dataset
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def normalize(data, average=[], std=[]):
     # normalizing input to the range of [~mean - 4*std, ~mean + 4*std]
     # becasue in this dataset, the timestep is in first dimension.
-    # adapt the normalization to fit this situation, compute mean and std in
-    # axis 0
+    # adapt the normalization to fit this situation, compute mean and std in axis 0
     if data.ndim == 4:
         n, t, c, f = data.shape
         data = data.reshape((n*t, -1))  # neuron input
@@ -24,8 +26,7 @@ def normalize(data, average=[], std=[]):
 class NeuroForcastDataset(Dataset):
     def __init__(self, neural_data, use_graph=False, average=[], std=[]):
         """
-        neural_data: N*T*C*F (sampe size * total time steps * channel 
-        *feature dimension)
+        neural_data: N*T*C*F (sampe size * total time steps * channel *feature dimension)
         f_window: T' the length of prediction window
         batch_size: batch size
         """
@@ -62,20 +63,23 @@ class Model(torch.nn.Module):
         else:
             raise ValueError(f'No such a monkey: {self.monkey_name}')
         self.encoder = torch.nn.GRU(
-            input_size=self.input_size, hidden_size=self.hidden_size, batch_first=True)
+            input_size=self.input_size, hidden_size=self.hidden_size, num_layers=1, batch_first=True)
         self.output_layer = torch.nn.Linear(self.hidden_size, self.input_size)
         # Load average and std from file during initialization
+        base = os.path.dirname(__file__)
         try:
             if self.monkey_name == 'beignet':
-                data = np.load('train_data_average_std_beignet.npz')
+                data = np.load(os.path.join(
+                    base, 'train_data_average_std_beignet.npz'))
             elif self.monkey_name == 'affi':
-                data = np.load('train_data_average_std_affi.npz')
+                data = np.load(os.path.join(
+                    base, 'train_data_average_std_affi.npz'))
             else:
                 raise ValueError(f'No such a monkey: {self.monkey_name}')
             self.average = data['average']
             self.std = data['std']
         except FileNotFoundError:
-            print("Warning: train_data_average_std.npz not found. "
+            print(f"Warning: train_data_average_std_{self.monkey_name}.npz not found. "
                   "Will load during predict.")
             self.average = None
             self.std = None
@@ -86,26 +90,30 @@ class Model(torch.nn.Module):
         return output
 
     def load(self):
+
+        base = os.path.dirname(__file__)
+
         path = "model.pth"
         if self.monkey_name == 'beignet':
-            path = "model_beignet.pth"
+            path = os.path.join(base, "model_beignet.pth")
         elif self.monkey_name == 'affi':
-            path = "model_affi.pth"
+            path = os.path.join(base, "model_affi.pth")
         else:
             raise ValueError(f'No such a monkey: {self.monkey_name}')
-        self.load_state_dict(torch.load(path, weights_only=True))
+        state_dict = torch.load(
+            path,
+            map_location=torch.device(device),
+            weights_only=True,
+        )
+        self.load_state_dict(state_dict)
 
     def predict(self, x):
-        # Load average and std from file if not already loaded
-        if self.average is None or self.std is None:
-            data = np.load('train_data_average_std.npz')
-            self.average = data['average']
-            self.std = data['std']
-
         # Create dataset from input data
         dataset = NeuroForcastDataset(
             x, use_graph=False, average=self.average, std=self.std)
 
+        # print(f'dataset:')
+        # print(dataset.data[0])
         # Process each sample in the dataset
         predictions = []
         self.eval()  # Set model to evaluation mode
